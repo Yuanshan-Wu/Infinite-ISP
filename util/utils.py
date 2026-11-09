@@ -24,6 +24,21 @@ OUTPUT_DIR = "out_frames/"
 OUTPUT_ARRAY_DIR = "./module_output/"
 
 
+def pad_cfa(img):
+    """
+    Pad each CFA channel separately by one pixel (two pixels on the raw image).
+
+    Same-color neighbours are two pixels apart on a Bayer grid, so a plain
+    mirror/reflect padding of the raw image maps the neighbour of a pixel at
+    index 1 (or N-2) back onto the pixel itself. Reflecting every same-color
+    sub-image on its own gives the nearest real same-color pixel instead.
+    """
+    padded = np.empty((img.shape[0] + 4, img.shape[1] + 4), dtype=img.dtype)
+    for row in (0, 1):
+        for col in (0, 1):
+            padded[row::2, col::2] = np.pad(img[row::2, col::2], 1, mode="reflect")
+    return padded
+
 def introduce_defect(img, total_defective_pixels, padding):
 
     """
@@ -155,9 +170,9 @@ def stride_convolve2d(matrix, kernel):
     ]
 
 
-def display_ae_statistics(ae_feedback, awb_gains):
+def display_ae_statistics(ae_result, awb_gains):
     """
-    Print AE Stats for current frame
+    Print 3A Stats for current frame (ae_result: the auto_exposure decision)
     """
     # Logs for AWB
     if awb_gains is None:
@@ -167,15 +182,37 @@ def display_ae_statistics(ae_feedback, awb_gains):
         print("   - 3A Stats    - AWB Bgain = ", awb_gains[1])
 
     # Logs for AE
-    if ae_feedback is None:
+    if ae_result is None:
         print("   - 3A Stats    - AE is Disable")
+        return
+    ev_err = ae_result["ev_err"] / 256.0
+    if ae_result["converged"]:
+        verdict = "Correct Exposure"
+    elif ev_err > 0:
+        verdict = "Underexposed"
     else:
-        if ae_feedback < 0:
-            print("   - 3A Stats    - AE Feedback = Underexposed")
-        elif ae_feedback > 0:
-            print("   - 3A Stats    - AE Feedback = Overexposed")
-        else:
-            print("   - 3A Stats    - AE Feedback = Correct Exposure")
+        verdict = "Overexposed"
+    print(f"   - 3A Stats    - AE Metered Mean = {ae_result['vm']} "
+          f"(target {ae_result['target_mean']})")
+    print(f"   - 3A Stats    - AE Exposure Error = {ev_err:+.2f} EV -> {verdict}")
+    if not ae_result["converged"] and not ae_result["moved"]:
+        print("   - 3A Stats    - AE Digital gain cannot get closer to the target "
+              "(end of gain_array or step too coarse)")
+    print(f"   - 3A Stats    - AE Digital Gain (next frame) = {ae_result['gain']}")
+
+
+def save_ae_statistics(img_name, stats, module_name):
+    """
+    Saves the per-grid AE statistics as CSV (one row per grid cell)
+    """
+    if not os.path.exists(OUTPUT_ARRAY_DIR):
+        Path(OUTPUT_ARRAY_DIR).mkdir(parents=True, exist_ok=False)
+    filename = OUTPUT_ARRAY_DIR + module_name + img_name.split(".")[0] + ".csv"
+    keys = list(stats)
+    with open(filename, "w", encoding="utf-8", newline="\n") as file:
+        file.write("cell," + ",".join(keys) + "\n")
+        for cell in range(len(stats[keys[0]])):
+            file.write(f"{cell}," + ",".join(str(stats[k][cell]) for k in keys) + "\n")
 
 
 def reconstruct_yuv_from_422_custom(yuv_422_custom, width, height):
@@ -261,7 +298,7 @@ class CustomDumper(yaml.Dumper):
     of the increase_indent and write_line_break methods. It ensures that indentations
     and line breaks are inserted correctly in the output YAML file."""
 
-    def increase_indent(self, flow=False, indentless=False):
+    def increase_indent(self, flow=False, indentless=False):  # pylint: disable=unused-argument
         """For indentation"""
         return super(CustomDumper, self).increase_indent(flow, False)
 

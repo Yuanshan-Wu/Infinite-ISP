@@ -9,6 +9,7 @@ Author: 10xEngineers Pvt Ltd
 
 import numpy as np
 from scipy.ndimage import maximum_filter, minimum_filter, correlate
+from util.utils import pad_cfa
 
 
 class DynamicDPC:
@@ -28,10 +29,6 @@ class DynamicDPC:
         """This function detects and corrects Dead pixels using numpy
         array opertaions."""
 
-        height, width = self.sensor_info["height"], self.sensor_info["width"]
-
-        dpc_img = np.empty((height, width), np.float32)
-
         # Get 3x3 neighbourhood of each pixel.
         # 5x5 matrix is defined as this window is extarcted from raw image.
         window = np.array(
@@ -44,8 +41,10 @@ class DynamicDPC:
             ]
         )
 
-        # The maximum and minimum filters automatically pad the input image internally,
-        # eliminating the need for manual padding.
+        # Pad each CFA channel before filtering. Every pixel of the original image
+        # then has its 5x5 window inside the padded array, so the scipy "mode"
+        # below does not affect the result after the padding is removed.
+        self.img = pad_cfa(self.img)
         max_value = maximum_filter(self.img, footprint=window, mode="mirror")
         min_value = minimum_filter(self.img, footprint=window, mode="mirror")
 
@@ -137,8 +136,6 @@ class DynamicDPC:
         )
 
         # convolve each kernel over image to compute differences
-        # The correlate function automatically pads the input image internally,
-        # eliminating the need for manual padding.
 
         diff_top_left = np.abs(correlate(self.img, ker_top_left, mode="mirror"))
         diff_top_mid = np.abs(correlate(self.img, ker_top_mid, mode="mirror"))
@@ -307,6 +304,8 @@ class DynamicDPC:
         dpc_img = np.where(detection_mask, corrected_img, self.img)
 
         # Remove padding
+        dpc_img = dpc_img[2:-2, 2:-2]
+        detection_mask = detection_mask[2:-2, 2:-2]
         self.img = np.uint16(np.clip(dpc_img, 0, (2**self.bpp) - 1))
 
         if self.is_debug:
