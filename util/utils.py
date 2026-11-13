@@ -18,7 +18,7 @@ from modules.demosaic.malvar_he_cutler import Malvar as MAL
 
 
 # Infinite-ISP output directory
-OUTPUT_DIR = "out_frames/"
+OUTPUT_DIR = "./out_frames/"
 
 # Output directory for Module output
 OUTPUT_ARRAY_DIR = "./module_output/"
